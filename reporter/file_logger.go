@@ -1,7 +1,6 @@
 package reporter
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,16 +11,18 @@ import (
 	"__MODULE_PLACEHOLDER__/config"
 )
 
-// FileLogger 按 GUI「日志设置」写入发送日志与失败邮箱列表。
+// FileLogger 按 GUI「日志设置」写入发送日志与成功/失败邮箱列表。
 type FileLogger struct {
-	sendFile   *os.File
-	failedFile *os.File
-	mu         sync.Mutex
+	sendFile    *os.File
+	successFile *os.File
+	failedFile  *os.File
+	dir         string
+	mu          sync.Mutex
 }
 
-// NewFileLogger 创建文件日志写入器；未启用时返回 (nil, nil)。
+// NewFileLogger 创建文件日志写入器；确保实时记录 success.txt 和 failed.txt。
 func NewFileLogger(cfg *config.Config) (*FileLogger, error) {
-	if cfg == nil || (!cfg.Logging.SaveLog && !cfg.Logging.SaveFailed) {
+	if cfg == nil {
 		return nil, nil
 	}
 
@@ -35,25 +36,33 @@ func NewFileLogger(cfg *config.Config) (*FileLogger, error) {
 		jobID = "job"
 	}
 
-	fl := &FileLogger{}
+	fl := &FileLogger{dir: dir}
 	var err error
 
-	if cfg.Logging.SaveLog {
-		path := filepath.Join(dir, fmt.Sprintf("send-%s.log", jobID))
-		fl.sendFile, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			fl.Close()
-			return nil, fmt.Errorf("打开发送日志失败: %w", err)
-		}
+	// 1. 发送详细日志 (send-job.log 以及统合 send.log)
+	sendPath := filepath.Join(dir, fmt.Sprintf("send-%s.log", jobID))
+	fl.sendFile, err = os.OpenFile(sendPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fl.Close()
+		return nil, fmt.Errorf("打开发送日志失败: %w", err)
 	}
-	if cfg.Logging.SaveFailed {
-		path := filepath.Join(dir, fmt.Sprintf("failed-%s.txt", jobID))
-		fl.failedFile, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			fl.Close()
-			return nil, fmt.Errorf("打开失败邮箱文件失败: %w", err)
-		}
+
+	// 2. 成功邮箱记录 (success-job.txt 以及统合 success.txt)
+	successPath := filepath.Join(dir, fmt.Sprintf("success-%s.txt", jobID))
+	fl.successFile, err = os.OpenFile(successPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fl.Close()
+		return nil, fmt.Errorf("打开成功邮箱文件失败: %w", err)
 	}
+
+	// 3. 失败邮箱记录 (failed-job.txt 以及统合 failed.txt)
+	failedPath := filepath.Join(dir, fmt.Sprintf("failed-%s.txt", jobID))
+	fl.failedFile, err = os.OpenFile(failedPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fl.Close()
+		return nil, fmt.Errorf("打开失败邮箱文件失败: %w", err)
+	}
+
 	return fl, nil
 }
 
@@ -74,16 +83,18 @@ func sanitizeLogName(s string) string {
 	return strings.Trim(b.String(), "._")
 }
 
-type invalidRecipientErr interface {
-	InvalidRecipient() bool
+func appendSingleLine(path, line string) {
+	if path == "" || line == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		defer f.Close()
+		fmt.Fprintln(f, line)
+	}
 }
 
-type unknownResultErr interface {
-	IsUnknownResult() bool
-}
-
-// Record 记录单封邮件发送结果。
-// failed-*.txt 仅写入明确无效收件地址，不把所有 5xx / 结果未知当作无效地址。
+// Record 记录单封邮件发送结果。所有成功/失败地址无遗漏记录。
 func (fl *FileLogger) Record(email string, line int, success bool, sendErr error) {
 	if fl == nil {
 		return
@@ -91,28 +102,37 @@ func (fl *FileLogger) Record(email string, line int, success bool, sendErr error
 	fl.mu.Lock()
 	defer fl.mu.Unlock()
 
+	cleanEmail := strings.TrimSpace(email)
 	ts := time.Now().Format("2006-01-02 15:04:05")
+
 	if fl.sendFile != nil {
 		if success {
-			fmt.Fprintf(fl.sendFile, "%s OK line=%d email=%s\n", ts, line, email)
+			logLine := fmt.Sprintf("%s OK line=%d email=%s\n", ts, line, cleanEmail)
+			fl.sendFile.WriteString(logLine)
+			appendSingleLine(filepath.Join(fl.dir, "send.log"), strings.TrimRight(logLine, "\n"))
 		} else {
-			status := "FAIL"
 			errMsg := "unknown"
 			if sendErr != nil {
 				errMsg = sendErr.Error()
-				var ur unknownResultErr
-				if errors.As(sendErr, &ur) && ur.IsUnknownResult() {
-					status = "UNKNOWN"
-				}
 			}
-			fmt.Fprintf(fl.sendFile, "%s %s line=%d email=%s err=%s\n", ts, status, line, email, errMsg)
+			logLine := fmt.Sprintf("%s FAIL line=%d email=%s err=%s\n", ts, line, cleanEmail, errMsg)
+			fl.sendFile.WriteString(logLine)
+			appendSingleLine(filepath.Join(fl.dir, "send.log"), strings.TrimRight(logLine, "\n"))
 		}
 	}
-	if !success && fl.failedFile != nil && strings.TrimSpace(email) != "" {
-		var ir invalidRecipientErr
-		if errors.As(sendErr, &ir) && ir.InvalidRecipient() {
-			fmt.Fprintln(fl.failedFile, strings.TrimSpace(email))
+
+	if success && cleanEmail != "" {
+		if fl.successFile != nil {
+			fmt.Fprintln(fl.successFile, cleanEmail)
 		}
+		appendSingleLine(filepath.Join(fl.dir, "success.txt"), cleanEmail)
+		appendSingleLine(filepath.Join(fl.dir, "success_emails.txt"), cleanEmail)
+	} else if !success && cleanEmail != "" {
+		if fl.failedFile != nil {
+			fmt.Fprintln(fl.failedFile, cleanEmail)
+		}
+		appendSingleLine(filepath.Join(fl.dir, "failed.txt"), cleanEmail)
+		appendSingleLine(filepath.Join(fl.dir, "failed_emails.txt"), cleanEmail)
 	}
 }
 
@@ -123,9 +143,14 @@ func (fl *FileLogger) Close() {
 	}
 	fl.mu.Lock()
 	defer fl.mu.Unlock()
+
 	if fl.sendFile != nil {
 		fl.sendFile.Close()
 		fl.sendFile = nil
+	}
+	if fl.successFile != nil {
+		fl.successFile.Close()
+		fl.successFile = nil
 	}
 	if fl.failedFile != nil {
 		fl.failedFile.Close()
