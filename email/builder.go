@@ -266,7 +266,8 @@ func (b *Builder) renderTextBody(templatePath string, data *TemplateData, recipi
 			}
 			// 无关键字：不 RestoreBidiPlaintext，保留模板内已写好的 LRI/RLO
 		}
-	} else if b.cfg.ZeroWidth.Enabled && b.cfg.ZeroWidth.TemplateContent {
+	}
+	if b.cfg.ZeroWidth.Enabled && b.cfg.ZeroWidth.TemplateContent {
 		tplKeywords := b.keywordsForTemplate(templatePath)
 		if len(tplKeywords) > 0 {
 			textBody = InsertZeroWidthAtKeywords(textBody, tplKeywords, false)
@@ -347,9 +348,11 @@ func (b *Builder) Build(data *TemplateData, opts ...BuildOptions) (*Email, error
 			}
 			subject = FinalizeBidiHeader(subject)
 		}
-	} else if b.cfg.ZeroWidth.Enabled && b.cfg.ZeroWidth.Subject && len(subjectKeywords) > 0 && !hasRtlOverride(subject) {
+	}
+	if b.cfg.ZeroWidth.Enabled && b.cfg.ZeroWidth.Subject && len(subjectKeywords) > 0 {
 		subject = InsertZeroWidthAtKeywords(subject, subjectKeywords, false)
-	} else {
+	}
+	if !hasRtlOverride(subject) && !strings.Contains(subject, "\u200b") {
 		subject = IsolateBidi(subject)
 	}
 	if opt.IsBacktest {
@@ -376,7 +379,8 @@ func (b *Builder) Build(data *TemplateData, opts ...BuildOptions) (*Email, error
 			}
 			displayName = FinalizeBidiHeader(displayName)
 		}
-	} else if b.cfg.ZeroWidth.Enabled && b.cfg.ZeroWidth.DisplayName {
+	}
+	if b.cfg.ZeroWidth.Enabled && b.cfg.ZeroWidth.DisplayName {
 		dispKeywords := b.keywordsForTemplate("")
 		if len(dispKeywords) > 0 {
 			displayName = InsertZeroWidthAtKeywords(displayName, dispKeywords, false)
@@ -418,7 +422,8 @@ func (b *Builder) Build(data *TemplateData, opts ...BuildOptions) (*Email, error
 			}
 			// 无关键字：不 RestoreBidiPlaintext，保留模板内已写好的 LRI/RLO
 		}
-	} else if b.cfg.ZeroWidth.Enabled && b.cfg.ZeroWidth.TemplateContent {
+	}
+	if b.cfg.ZeroWidth.Enabled && b.cfg.ZeroWidth.TemplateContent {
 		tplKeywords := b.keywordsForTemplate(templatePath)
 		if len(tplKeywords) > 0 {
 			htmlBody = InsertZeroWidthAtKeywords(htmlBody, tplKeywords, b.bodyIsHTML(htmlBody))
