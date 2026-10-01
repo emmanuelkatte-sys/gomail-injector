@@ -18,7 +18,7 @@ func TestIsHTMLContent_divFragment(t *testing.T) {
 func TestBodyIsHTML_respectsConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.Email.ContentType = "text/html"
-	b := NewBuilder(cfg, 0)
+	b := NewBuilder(cfg, nil, 0)
 	plainLooking := "hello world"
 	if !b.bodyIsHTML(plainLooking) {
 		t.Fatalf("content_type text/html should force HTML body")
@@ -42,7 +42,7 @@ func TestBodyIsHTML_templateFile(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Email.ContentType = "text/html"
-	b := NewBuilder(cfg, 0)
+	b := NewBuilder(cfg, nil, 0)
 	if !b.bodyIsHTML(raw) {
 		t.Fatalf("real JCB template must be treated as HTML")
 	}

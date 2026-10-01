@@ -16,6 +16,7 @@ func TestShuffleHeadersPreservesDkimSignBlockOrder(t *testing.T) {
 		"Message-ID: <1@mail.example.com>\r\n",
 		"MIME-Version: 1.0\r\n",
 		"Content-Language: ja\r\n",
+		"Content-Type: text/plain\r\n",
 		"Reply-To: reply@mail.example.com\r\n",
 	}
 	signHeaders := []string{"from", "to", "subject", "date", "message-id", "content-type"}
